@@ -114,6 +114,7 @@ def run_claude(prompt, cwd, timeout, chrome=False):
 
 
 PREVIEW_PROMPT = """用 baby-outfit-xhs skill 处理当前目录这组衣服图（原图/01.jpg…）。这是无人值守的后台任务：不要提问，没有人会看你的回复。
+**所有命令都在前台运行，绝对不要用 run_in_background**（后台任务会在你结束时被丢掉），生图命令的 timeout 设成 600000，等它跑完再继续。
 只做第 1 步和第 1.5 步：
 1. 逐张看原图，按 skill 的规则识别单品、安排九宫格位置（9 张都用同一个固定躺姿）。
 2. 生成九宫格预览，存为 九宫格预览_v{ver}.png（生图用 skill 里的 gen.py）。
@@ -123,6 +124,7 @@ PREVIEW_PROMPT = """用 baby-outfit-xhs skill 处理当前目录这组衣服图�
 完成后只输出一行 DONE。"""
 
 PRODUCE_PROMPT = """用 baby-outfit-xhs skill 处理当前目录这组衣服图。这是无人值守的后台任务：不要提问，没有人会看你的回复。
+**所有命令都在前台运行，绝对不要用 run_in_background**（后台任务会在你结束时被丢掉），生图命令的 timeout 设成 600000，等它跑完再继续。
 用户已在公众号确认了最新的 九宫格预览_v*.png 和 清单.md 的排位，照这个做：
 1. 第 2 步：按 清单.md 的排位生成 9 张单套图到 单套/01.png…09.png（每张用对应原图当参考，严格按「衣服细节一致」检查，不合格的只重跑那张，每张最多重跑 2 次）。
 2. 第 3 步：拼 封面.jpg。
@@ -172,7 +174,7 @@ def do_produce(item, folder):
             (folder / "小红书状态.txt").write_text(status)
     finally:
         stop.set()
-    if ok and status == "draft_saved":
+    if ok and status.startswith("draft_saved"):
         wen = (folder / "文案.md").read_text() if (folder / "文案.md").exists() else ""
         set_stage(item["id"], stage="draft_ready", draftText=wen[:1500])
         sync.notify("小红书草稿已填好，去 App 草稿箱确认后发布")
