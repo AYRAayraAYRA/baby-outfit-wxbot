@@ -143,7 +143,7 @@ const OWNER_HELP =
   '其他文字＝对预览的修改意见，会重新出预览\n' +
   '「进度」看当前进度\n' +
   '「登录」小红书需要登录时取二维码';
-const ADMIN_HELP = '\n\n管理员指令：\n「同意」通过最近一个人的「申请」\n「成员」看成员名单';
+const ADMIN_HELP = '\n\n管理员指令：\n「全部」看所有成员最近的组\n「同意」通过最近一个人的「申请」\n「成员」看成员名单\n（自己没在做的组时，「预览」「进度」看的是最近任何成员的组）';
 
 const STAGE_TEXT = {
   previewing: '正在生成九宫格预览⏳ 大约 3 分钟，好了发「预览」查看',
@@ -157,10 +157,13 @@ const STAGE_TEXT = {
 
 function isOwner(openid) { return !!(state.members && state.members[openid]); }
 
+const ACTIVE = ['previewing', 'preview_ready', 'revise', 'approved', 'producing'];
+
+// openid 为 null 时不限提交人（只看成员的组）
 function latestOwnerBatch(openid) {
   let best = null;
   for (const [id, b] of Object.entries(state.batches)) {
-    if (b.openid !== openid || !b.stage) continue;
+    if (!b.stage || (openid ? b.openid !== openid : !isOwner(b.openid))) continue;
     if (!best || (b.submittedAt || 0) > (best.b.submittedAt || 0)) best = { id, b };
   }
   return best;
@@ -205,6 +208,16 @@ async function xhsLoginNotice() {
 async function handleOwnerText(text, openid) {
   const cur = latestOwnerBatch(openid);
   const t = text.toLowerCase();
+  let view = cur;
+  if (openid === state.admin && !(cur && ACTIVE.includes(cur.b.stage))) view = latestOwnerBatch(null) || cur;
+  const who = view && view.b.openid !== openid ? `【${state.members[view.b.openid] || '成员'}提交的这组】\n` : '';
+  if (openid === state.admin && text === '全部') {
+    const rows = Object.values(state.batches)
+      .filter((b) => b.stage && isOwner(b.openid) && Date.now() - (b.submittedAt || 0) < 7 * 24 * 3600 * 1000)
+      .sort((x, y) => (y.submittedAt || 0) - (x.submittedAt || 0)).slice(0, 8)
+      .map((b) => `· ${state.members[b.openid] || '成员'}（${((t) => `${t.slice(4, 6)}-${t.slice(6, 8)} ${t.slice(9, 11)}:${t.slice(11, 13)}`)(bjTime(new Date(b.submittedAt || 0)))}）：${(STAGE_TEXT[b.stage] || b.stage).split(/[，,⏳✅\n]/)[0]}`);
+    return rows.length ? '最近 7 天的组：\n' + rows.join('\n') : '最近 7 天没有提交的组。';
+  }
   if (text === '登录') {
     return (await loginNotice(openid)) || '现在小红书不需要登录👌';
   }
@@ -221,21 +234,25 @@ async function handleOwnerText(text, openid) {
     return `已通过「${r.name}」✅ 现在成员共 ${Object.keys(state.members).length} 人。`;
   }
   if (text === '进度' || text === '帮助') {
-    let s = cur ? (STAGE_TEXT[cur.b.stage] || cur.b.stage) : '现在没有在处理的组';
-    if (cur && cur.b.progressText && ['producing', 'previewing', 'revise'].includes(cur.b.stage)) {
-      const mins = Math.round((Date.now() - (cur.b.progressAt || Date.now())) / 60000);
-      s += '\n\n' + cur.b.progressText + `\n（${mins} 分钟前更新）`;
-      if (cur.b.progressImage) s += '\n' + (await linkTo(cur.b.progressImage, '点这里看已出的图'));
+    let s = view ? who + (STAGE_TEXT[view.b.stage] || view.b.stage) : '现在没有在处理的组';
+    if (view && view.b.progressText && ['producing', 'previewing', 'revise'].includes(view.b.stage)) {
+      const mins = Math.round((Date.now() - (view.b.progressAt || Date.now())) / 60000);
+      s += '\n\n' + view.b.progressText + `\n（${mins} 分钟前更新）`;
+      if (view.b.progressImage) s += '\n' + (await linkTo(view.b.progressImage, '点这里看已出的图'));
     }
-    if (cur && cur.b.stage === 'failed' && cur.b.error) s += '\n原因：' + cur.b.error;
+    if (view && view.b.stage === 'failed' && view.b.error) s += '\n原因：' + view.b.error;
     return (await loginNotice(openid)) + s + (text === '帮助' ? '\n\n' + OWNER_HELP + (openid === state.admin ? ADMIN_HELP : '') : '');
   }
   if (text === '预览') {
-    if (!cur) return '还没有预览。发「1」开始一组衣服图。';
-    const b = cur.b;
-    if (b.stage !== 'preview_ready' || !b.preview) return (await loginNotice(openid)) + (STAGE_TEXT[b.stage] || '还没好');
-    return (await loginNotice(openid)) + `九宫格预览 v${b.preview.version || 1}👇\n` + (await linkTo(b.preview.path, '点这里看预览图')) +
-      '\n\n' + (b.preview.text || '') + '\n\n满意回「ok」；要改直接说哪里要改（比如"第 8 套裙子是湖蓝色"）。';
+    if (!view) return '还没有预览。发「1」开始一组衣服图。';
+    const b = view.b;
+    if (!b.preview) return (await loginNotice(openid)) + who + (STAGE_TEXT[b.stage] || '还没好');
+    const mine = view.b.openid === openid;
+    const tail = b.stage === 'preview_ready'
+      ? (mine ? '满意回「ok」；要改直接说哪里要改（比如"第 8 套裙子是湖蓝色"）。' : '（确认和修改由提交人在她的公众号对话里操作）')
+      : (STAGE_TEXT[b.stage] || '');
+    return (await loginNotice(openid)) + who + `九宫格预览 v${b.preview.version || 1}👇\n` + (await linkTo(b.preview.path, '点这里看预览图')) +
+      '\n\n' + (b.preview.text || '') + '\n\n' + tail;
   }
   if (['ok', '好', '好的', '确认', '可以'].includes(t)) {
     if (!cur || cur.b.stage !== 'preview_ready') return (await loginNotice(openid)) + (cur ? STAGE_TEXT[cur.b.stage] : '现在没有等确认的预览');
@@ -274,7 +291,7 @@ async function handle(msg) {
 
   if (type === 'text') {
     const text = String(msg.Content || '').trim();
-    const CMDS = ['预览', '进度', '帮助', '登录', '成员', '同意'];
+    const CMDS = ['预览', '进度', '帮助', '登录', '成员', '同意', '全部'];
     if (isOwner(openid) && (!batch || CMDS.includes(text))) {
       const r = await handleOwnerText(text, openid);
       if (r) return r;
