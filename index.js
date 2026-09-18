@@ -171,7 +171,20 @@ async function linkTo(p, label) {
   return u ? `<a href="${u}">${label}</a>（15 分钟内有效）` : '（链接生成失败，稍后再试）';
 }
 
-async function loginNotice() {
+async function loginNotice(openid) {
+  let pre = '';
+  if (openid && openid === state.admin) {
+    const reqs = Object.values(state.requests || {}).filter((r) => !r.notified && Date.now() - r.at < 24 * 3600 * 1000);
+    if (reqs.length) {
+      pre = '📮 新的加入申请：' + reqs.map((r) => r.name).join('、') + '\n发「同意」通过最新的一个。\n\n';
+      reqs.forEach((r) => { r.notified = true; });
+      saveState();
+    }
+  }
+  return pre + (await xhsLoginNotice());
+}
+
+async function xhsLoginNotice() {
   const L = state.login;
   if (!L || !L.needed || !L.qrPath) return '';
   return '⚠️ 小红书要重新登录：' + (await linkTo(L.qrPath, '点这里看二维码')) +
@@ -182,7 +195,7 @@ async function handleOwnerText(text, openid) {
   const cur = latestOwnerBatch(openid);
   const t = text.toLowerCase();
   if (text === '登录') {
-    return (await loginNotice()) || '现在小红书不需要登录👌';
+    return (await loginNotice(openid)) || '现在小红书不需要登录👌';
   }
   if (openid === state.admin && text === '成员') {
     return '成员：\n' + Object.values(state.members || {}).join('\n');
@@ -197,18 +210,24 @@ async function handleOwnerText(text, openid) {
     return `已通过「${r.name}」✅ 现在成员共 ${Object.keys(state.members).length} 人。`;
   }
   if (text === '进度' || text === '帮助') {
-    const s = cur ? (STAGE_TEXT[cur.b.stage] || cur.b.stage) : '现在没有在处理的组';
-    return (await loginNotice()) + s + (text === '帮助' ? '\n\n' + OWNER_HELP + (openid === state.admin ? ADMIN_HELP : '') : '');
+    let s = cur ? (STAGE_TEXT[cur.b.stage] || cur.b.stage) : '现在没有在处理的组';
+    if (cur && cur.b.progressText && ['producing', 'previewing', 'revise'].includes(cur.b.stage)) {
+      const mins = Math.round((Date.now() - (cur.b.progressAt || Date.now())) / 60000);
+      s += '\n\n' + cur.b.progressText + `\n（${mins} 分钟前更新）`;
+      if (cur.b.progressImage) s += '\n' + (await linkTo(cur.b.progressImage, '点这里看已出的图'));
+    }
+    if (cur && cur.b.stage === 'failed' && cur.b.error) s += '\n原因：' + cur.b.error;
+    return (await loginNotice(openid)) + s + (text === '帮助' ? '\n\n' + OWNER_HELP + (openid === state.admin ? ADMIN_HELP : '') : '');
   }
   if (text === '预览') {
     if (!cur) return '还没有预览。发「1」开始一组衣服图。';
     const b = cur.b;
-    if (b.stage !== 'preview_ready' || !b.preview) return (await loginNotice()) + (STAGE_TEXT[b.stage] || '还没好');
-    return (await loginNotice()) + `九宫格预览 v${b.preview.version || 1}👇\n` + (await linkTo(b.preview.path, '点这里看预览图')) +
+    if (b.stage !== 'preview_ready' || !b.preview) return (await loginNotice(openid)) + (STAGE_TEXT[b.stage] || '还没好');
+    return (await loginNotice(openid)) + `九宫格预览 v${b.preview.version || 1}👇\n` + (await linkTo(b.preview.path, '点这里看预览图')) +
       '\n\n' + (b.preview.text || '') + '\n\n满意回「ok」；要改直接说哪里要改（比如"第 8 套裙子是湖蓝色"）。';
   }
   if (['ok', '好', '好的', '确认', '可以'].includes(t)) {
-    if (!cur || cur.b.stage !== 'preview_ready') return (await loginNotice()) + (cur ? STAGE_TEXT[cur.b.stage] : '现在没有等确认的预览');
+    if (!cur || cur.b.stage !== 'preview_ready') return (await loginNotice(openid)) + (cur ? STAGE_TEXT[cur.b.stage] : '现在没有等确认的预览');
     cur.b.stage = 'approved';
     cur.b.approvedAt = Date.now();
     saveState();
@@ -286,7 +305,7 @@ async function handle(msg) {
       saveState();
       return '备注记下了📝';
     }
-    if (isOwner(openid)) return (await loginNotice()) + OWNER_HELP;
+    if (isOwner(openid)) return (await loginNotice(openid)) + OWNER_HELP;
     return HELP;
   }
 
@@ -410,6 +429,19 @@ const server = http.createServer(async (req, res) => {
         if (body.previewText != null) { b.preview = b.preview || {}; b.preview.text = body.previewText; }
         if (body.draftText != null) b.draftText = body.draftText;
         if (body.error != null) b.error = body.error;
+        if (body.progressText != null) { b.progressText = body.progressText; b.progressAt = Date.now(); }
+        await saveState();
+        return send(res, 200, { ok: true });
+      }
+
+      // 进度缩略图：POST /api/batches/:id/progress-image（body 是 jpg）
+      const mg = url.pathname.match(/^\/api\/batches\/([\w-]+)\/progress-image$/);
+      if (req.method === 'POST' && mg) {
+        const b = state.batches[mg[1]];
+        if (!b) return send(res, 404, { error: 'not found' });
+        const p = `wxbot/batches/${mg[1]}/progress_${Date.now()}.jpg`;
+        await store.put(p, await readBody(req), 'image/jpeg');
+        b.progressImage = p;
         await saveState();
         return send(res, 200, { ok: true });
       }

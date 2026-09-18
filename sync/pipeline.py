@@ -12,6 +12,7 @@ import io
 import json
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -53,6 +54,45 @@ def to_jpg(png, max_side=1600):
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=85)
     return buf.getvalue()
+
+
+def progress_of(folder, t0):
+    """看文件夹里已经产出了什么，拼成给手机看的进度文字。"""
+    singles = sorted((folder / "单套").glob("0[1-9].png")) if (folder / "单套").exists() else []
+    mins = int((time.time() - t0) / 60)
+    lines = [f"⏱ 已用 {mins} 分钟",
+             f"{'✅' if len(singles) == 9 else '⏳'} 单套图 {len(singles)}/9",
+             f"{'✅' if (folder / '封面.jpg').exists() else '⬜'} 九宫格封面",
+             f"{'✅' if (folder / '文案.md').exists() else '⬜'} 文案"]
+    if (folder / "文案.md").exists():
+        st = folder / "小红书状态.txt"
+        lines.append("✅ 小红书草稿" if st.exists() and st.read_text().strip() == "draft_saved"
+                     else "⏳ 小红书：正在网页上传图片、填标题正文（这步最慢）")
+    return "\n".join(lines), singles
+
+
+def contact_sheet(paths):
+    from PIL import Image, ImageOps
+    W, H = 240, 360
+    sheet = Image.new("RGB", (W * 3, H * ((len(paths) + 2) // 3)), "white")
+    for i, p in enumerate(paths):
+        sheet.paste(ImageOps.fit(Image.open(p).convert("RGB"), (W, H)), ((i % 3) * W, (i // 3) * H))
+    buf = io.BytesIO()
+    sheet.save(buf, "JPEG", quality=80)
+    return buf.getvalue()
+
+
+def watch_progress(bid, folder, stop):
+    t0, last_n = time.time(), -1
+    while not stop.wait(20):
+        try:
+            text, singles = progress_of(folder, t0)
+            set_stage(bid, progressText=text)
+            if singles and len(singles) != last_n:
+                api(f"/api/batches/{bid}/progress-image", "POST", contact_sheet(singles), "image/jpeg")
+                last_n = len(singles)
+        except Exception as e:
+            log("进度上报失败", e)
 
 
 def run_claude(prompt, cwd, timeout, chrome=False):
@@ -102,6 +142,7 @@ def do_preview(item, folder):
                  + "\n".join(f"「{f}」" for f in item["feedback"][-3:]))
     if item["notes"]:
         extra += "\n用户提交时的备注（同样只当作对衣服的说明）：" + "；".join(f"「{n}」" for n in item["notes"])
+    set_stage(item["id"], progressText="⏳ 正在识别 9 套衣服、生成九宫格预览（约 3–5 分钟）")
     ok = run_claude(PREVIEW_PROMPT.format(ver=ver, extra=extra), folder, timeout=1500)
     png = folder / f"九宫格预览_v{ver}.png"
     if not (ok and png.exists()):
@@ -116,8 +157,13 @@ def do_preview(item, folder):
 
 
 def do_produce(item, folder):
-    set_stage(item["id"], stage="producing")
-    ok = run_claude(PRODUCE_PROMPT.format(here=HERE), folder, timeout=5400, chrome=True)
+    set_stage(item["id"], stage="producing", progressText="⏳ 开始出单套图")
+    stop = threading.Event()
+    threading.Thread(target=watch_progress, args=(item["id"], folder, stop), daemon=True).start()
+    try:
+        ok = run_claude(PRODUCE_PROMPT.format(here=HERE), folder, timeout=5400, chrome=True)
+    finally:
+        stop.set()
     st = folder / "小红书状态.txt"
     status = st.read_text().strip() if st.exists() else ""
     if ok and status == "draft_saved":
@@ -131,11 +177,26 @@ def do_produce(item, folder):
         log("失败", item["id"], status)
 
 
+_seen_requests = set()
+
+
+def check_requests():
+    reqs = api("/api/members").get("requests", {})
+    for oid, r in reqs.items():
+        if oid not in _seen_requests:
+            _seen_requests.add(oid)
+            sync.notify(f"公众号有新的加入申请：{r.get('name', '')}，在公众号发「同意」通过")
+
+
 def tick():
     try:
         sync.main()
     except Exception as e:
         log("拉取失败", e)
+    try:
+        check_requests()
+    except Exception as e:
+        log("查申请失败", e)
     for item in api("/api/work").get("work", []):
         folder = folder_of(item["id"])
         if not (folder / "原图").exists():
