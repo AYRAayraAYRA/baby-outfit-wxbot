@@ -192,7 +192,7 @@ async function loginNotice(openid) {
       }
     }
   }
-  return pre + (await xhsLoginNotice());
+  return pre + (isOwner(openid) ? await xhsLoginNotice() : '');
 }
 
 async function xhsLoginNotice() {
