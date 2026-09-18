@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""用固定步骤把一组成品填进小红书并「暂存」为草稿（Playwright，不经过 AI 看网页）。
+"""用固定步骤把一组成品填进小红书，并以「仅自己可见」发布（Playwright，不经过 AI 看网页）。
 
-用法：xhs_draft.py <组目录> [--account main] [--show]
+为什么不暂存：网页版「暂存离开」只存在这台电脑的浏览器本地，手机上看不到。
+用户 2026-09-18 同意：每组都发成「仅自己可见」，她在手机「我→笔记」里检查后自己改成公开。
+
+用法：xhs_draft.py <组目录> [--account main] [--show] [--draft-only]
   组目录里要有：封面.jpg、单套/01.png…09.png、文案.md（第一行标题，最后一行 #话题）
   --account  小红书账号代号，每个账号一个独立的浏览器环境（登录状态互不影响）
   --show     显示浏览器窗口（调试用）
+  --draft-only  只暂存到这台电脑的网页草稿箱，不发布
 
 需要登录时：把二维码截图上报给公众号服务（发「登录」的成员能拿到），每 40 秒刷新，最多等 15 分钟。
-永远不点「发布」：暂存按钮在封闭组件里只能按坐标点，点之前先检查目标位置不是红色的发布按钮，否则中止。
+只会以「仅自己可见」发布：点发布前核对可见范围确实是「仅自己可见」，否则中止。
+暂存/发布按钮在封闭组件里只能按坐标点，点之前先核对按钮颜色（暂存是白色、发布是红色）。
 输出最后一行 JSON：{"ok": true} 或 {"ok": false, "error": "..."}
 """
 import argparse
@@ -126,12 +131,25 @@ def declare_ai(page, log):
     log("已声明：笔记含AI合成内容")
 
 
+def set_private(page, log):
+    sel = page.locator(".d-select").filter(has_text=re.compile("公开可见|仅自己可见|仅互关好友可见")).first
+    sel.scroll_into_view_if_needed()
+    sel.click()
+    page.wait_for_timeout(800)
+    page.locator(".custom-option").filter(has_text="仅自己可见").first.click()
+    page.wait_for_timeout(800)
+    shown = sel.inner_text()
+    if "仅自己可见" not in shown:
+        raise RuntimeError(f"可见范围没有设成「仅自己可见」（现在是：{shown.strip()}），为了不公开发布，已中止")
+    log("可见范围：仅自己可见")
+
+
 def is_red(rgb):
     r, g, b = rgb
     return r > 200 and g < 110 and b < 120
 
 
-def save_draft(page, log):
+def check_buttons(page):
     from PIL import Image
     import io
     host = page.locator("xhs-publish-btn").first
@@ -144,9 +162,29 @@ def save_draft(page, log):
     right = shot.getpixel((int((cx + 70) * sx), int(cy * sy)))  # 应该是「发布」（红）
     if is_red(left) or not is_red(right):
         raise RuntimeError(f"按钮布局和预期不一样（左 {left} 右 {right}），为了不误点发布，已中止")
+    return box, cx, cy
+
+
+def click_draft(page, log):
+    box, cx, cy = check_buttons(page)
     page.mouse.click(box["x"] + cx - 70, box["y"] + cy)
     page.wait_for_timeout(4000)
-    log("已点「暂存离开」")
+    log("已点「暂存离开」（只存在这台电脑的浏览器里）")
+
+
+def click_publish_private(page, log):
+    set_private(page, log)
+    box, cx, cy = check_buttons(page)
+    shown = page.locator(".d-select").filter(has_text=re.compile("可见")).first.inner_text()
+    if "仅自己可见" not in shown:  # 点之前再核对一次
+        raise RuntimeError("点发布前可见范围不是「仅自己可见」，已中止")
+    page.mouse.click(box["x"] + cx + 70, box["y"] + cy)
+    for _ in range(30):  # 等发布成功（页面跳转或出现成功提示）
+        page.wait_for_timeout(1000)
+        if "publish/publish" not in page.url or page.get_by_text(re.compile("发布成功")).count():
+            log("已以「仅自己可见」发布")
+            return
+    raise RuntimeError("点了发布但 30 秒内没看到成功，请到手机「我→笔记」确认")
 
 
 def main():
@@ -154,6 +192,7 @@ def main():
     ap.add_argument("folder")
     ap.add_argument("--account", default="main")
     ap.add_argument("--show", action="store_true")
+    ap.add_argument("--draft-only", action="store_true")
     a = ap.parse_args()
     folder = Path(a.folder)
     log = lambda *x: print(time.strftime("%H:%M:%S"), *x, flush=True)  # noqa: E731
@@ -178,7 +217,7 @@ def main():
             upload_images(page, files, log)
             fill_text(page, title, body, topics, log)
             declare_ai(page, log)
-            save_draft(page, log)
+            (click_draft if a.draft_only else click_publish_private)(page, log)
             result = {"ok": True}
         except Exception as e:
             page.screenshot(path=str(folder / "小红书_出错截图.png"))

@@ -66,8 +66,8 @@ def progress_of(folder, t0):
              f"{'✅' if (folder / '文案.md').exists() else '⬜'} 文案"]
     if (folder / "文案.md").exists():
         st = folder / "小红书状态.txt"
-        lines.append("✅ 小红书草稿" if st.exists() and st.read_text().strip() == "draft_saved"
-                     else "⏳ 小红书：正在网页上传图片、填标题正文（这步最慢）")
+        lines.append("✅ 小红书已发布（仅自己可见）" if st.exists() and st.read_text().strip() == "draft_saved"
+                     else "⏳ 小红书：正在上传图片、填标题正文，以「仅自己可见」发布（约 1 分钟）")
     return "\n".join(lines), singles
 
 
@@ -166,7 +166,7 @@ def do_produce(item, folder):
         ok = run_claude(PRODUCE_PROMPT, folder, timeout=3600)
         status = "出图或文案没完成"
         if ok and (folder / "文案.md").exists() and (folder / "封面.jpg").exists():
-            # 固定脚本填小红书并暂存（1–2 分钟；需要登录时会把二维码报给公众号）
+            # 固定脚本填小红书并以「仅自己可见」发布（约 1 分钟；需要登录时会把二维码报给公众号）
             r = subprocess.run([sys.executable, str(HERE / "xhs_draft.py"), str(folder), "--account", "main"],
                                capture_output=True, text=True, timeout=1800)
             with (folder / "流程日志.txt").open("a") as f:
@@ -179,7 +179,7 @@ def do_produce(item, folder):
     if ok and status.startswith("draft_saved"):
         wen = (folder / "文案.md").read_text() if (folder / "文案.md").exists() else ""
         set_stage(item["id"], stage="draft_ready", draftText=wen[:1500])
-        sync.notify("小红书草稿已填好，去 App 草稿箱确认后发布")
+        sync.notify("已在小红书以「仅自己可见」发布，去 App「我→笔记」检查后改公开")
         log("草稿完成", item["id"])
     else:
         set_stage(item["id"], stage="failed", error=status or "生产流程失败")

@@ -139,7 +139,7 @@ const HELP =
 const OWNER_HELP =
   '本人指令：\n' +
   '「预览」看九宫格预览\n' +
-  '「ok」确认预览，开始出 9 张单套图并填好小红书草稿\n' +
+  '「ok」确认预览，开始出 9 张单套图，并在小红书以「仅自己可见」发布\n' +
   '其他文字＝对预览的修改意见，会重新出预览\n' +
   '「进度」看当前进度\n' +
   '「登录」小红书需要登录时取二维码';
@@ -151,7 +151,7 @@ const STAGE_TEXT = {
   revise: '收到修改意见，正在重新出预览⏳',
   approved: '已确认，排队出单套图⏳',
   producing: '正在出 9 张单套图、拼封面、写文案、填小红书⏳ 大约 15–20 分钟',
-  draft_ready: '小红书草稿已填好✅ 去小红书 App「草稿箱」看一眼，确认没问题就自己点发布',
+  draft_ready: '已在小红书以「仅自己可见」发布✅ 打开小红书 App →「我」→「笔记」检查修改，没问题就在笔记的「权限设置」里改成公开',
   failed: '这一组处理出错了，我在电脑上看一下😣',
 };
 
@@ -201,7 +201,7 @@ async function loginNotice(openid) {
     for (const bt of Object.values(state.batches)) {
       if (bt.openid === openid && bt.stage === 'draft_ready' && !bt.draftNotified) {
         const title = (bt.draftText || '').split('\n')[0].trim();
-        pre += `✅ 上一组已保存到小红书草稿箱${title ? `：「${title}」` : ''}\n请及时打开小红书 App →「草稿箱」检查修改，确认没问题再点发布。\n\n`;
+        pre += `✅ 上一组已在小红书以「仅自己可见」发布${title ? `：「${title}」` : ''}\n请及时打开小红书 App →「我」→「笔记」检查修改，没问题就在笔记的「权限设置」里改成公开。\n\n`;
         bt.draftNotified = true;
         saveState();
       }
@@ -272,7 +272,7 @@ async function handleOwnerText(text, openid) {
     cur.b.stage = 'approved';
     cur.b.approvedAt = Date.now();
     saveState();
-    return '好嘞✅ 开始出 9 张单套图 → 拼封面 → 写文案 → 填小红书草稿，大约 15–20 分钟。\n发「进度」随时查看。';
+    return '好嘞✅ 开始出 9 张单套图 → 拼封面 → 写文案 → 在小红书以「仅自己可见」发布，大约 15 分钟。\n发「进度」随时查看。';
   }
   if (cur && cur.b.stage === 'preview_ready') {
     cur.b.feedback = cur.b.feedback || [];
