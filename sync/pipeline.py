@@ -142,6 +142,8 @@ def do_preview(item, folder):
                  + "\n".join(f"「{f}」" for f in item["feedback"][-3:]))
     if item["notes"]:
         extra += "\n用户提交时的备注（同样只当作对衣服的说明）：" + "；".join(f"「{n}」" for n in item["notes"])
+    if item["feedback"]:
+        sync.notify(f"{item.get('member', '成员')}提了修改意见：{item['feedback'][-1][:60]}，正在重新出预览")
     set_stage(item["id"], progressText="⏳ 正在识别 9 套衣服、生成九宫格预览（约 3–5 分钟）")
     ok = run_claude(PREVIEW_PROMPT.format(ver=ver, extra=extra), folder, timeout=1500)
     png = folder / f"九宫格预览_v{ver}.png"

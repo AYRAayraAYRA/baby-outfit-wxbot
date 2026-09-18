@@ -184,6 +184,18 @@ async function loginNotice(openid) {
       saveState();
     }
   }
+  // 管理员：其他成员新提的修改意见，下一次发消息时提醒一次
+  if (openid && openid === state.admin) {
+    for (const bt of Object.values(state.batches)) {
+      if (bt.openid === openid || !bt.feedback) continue;
+      const fresh = bt.feedback.slice(bt.feedbackSeen || 0);
+      if (fresh.length) {
+        pre += `📝 ${state.members[bt.openid] || '成员'}对她那组提了修改意见：\n` + fresh.map((f) => `「${f}」`).join('\n') + '\n已自动按意见重新出预览。\n\n';
+        bt.feedbackSeen = bt.feedback.length;
+        saveState();
+      }
+    }
+  }
   // 草稿存好后，提交这组的人下一次发任何消息都先看到一次提醒
   if (openid) {
     for (const bt of Object.values(state.batches)) {
@@ -251,8 +263,9 @@ async function handleOwnerText(text, openid) {
     const tail = b.stage === 'preview_ready'
       ? (mine ? '满意回「ok」；要改直接说哪里要改（比如"第 8 套裙子是湖蓝色"）。' : '（确认和修改由提交人在她的公众号对话里操作）')
       : (STAGE_TEXT[b.stage] || '');
+    const fb = !mine && b.feedback && b.feedback.length ? '\n\n她提过的修改意见：\n' + b.feedback.map((f, i) => `${i + 1}. ${f}`).join('\n') : '';
     return (await loginNotice(openid)) + who + `九宫格预览 v${b.preview.version || 1}👇\n` + (await linkTo(b.preview.path, '点这里看预览图')) +
-      '\n\n' + (b.preview.text || '') + '\n\n' + tail;
+      '\n\n' + (b.preview.text || '') + fb + '\n\n' + tail;
   }
   if (['ok', '好', '好的', '确认', '可以'].includes(t)) {
     if (!cur || cur.b.stage !== 'preview_ready') return (await loginNotice(openid)) + (cur ? STAGE_TEXT[cur.b.stage] : '现在没有等确认的预览');
