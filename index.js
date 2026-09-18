@@ -181,6 +181,17 @@ async function loginNotice(openid) {
       saveState();
     }
   }
+  // 草稿存好后，提交这组的人下一次发任何消息都先看到一次提醒
+  if (openid) {
+    for (const bt of Object.values(state.batches)) {
+      if (bt.openid === openid && bt.stage === 'draft_ready' && !bt.draftNotified) {
+        const title = (bt.draftText || '').split('\n')[0].trim();
+        pre += `✅ 上一组已保存到小红书草稿箱${title ? `：「${title}」` : ''}\n请及时打开小红书 App →「草稿箱」检查修改，确认没问题再点发布。\n\n`;
+        bt.draftNotified = true;
+        saveState();
+      }
+    }
+  }
   return pre + (await xhsLoginNotice());
 }
 
@@ -306,7 +317,7 @@ async function handle(msg) {
       return '备注记下了📝';
     }
     if (isOwner(openid)) return (await loginNotice(openid)) + OWNER_HELP;
-    return HELP;
+    return (await loginNotice(openid)) + HELP;
   }
 
   if (type === 'image') {
