@@ -60,8 +60,10 @@ def ensure_login(page, account, log):
                 page.goto(PUBLISH_URL, wait_until="domcontentloaded")
                 page.wait_for_timeout(3000)
                 return True
-            if time.time() - last > 40:
-                report_login(account, qr_shot(page, reload=last > 0))
+            # 只在二维码真的过期时才刷新；扫码后正在确认时刷新会让手机端报「二维码不支持确认」
+            expired = page.get_by_text(re.compile("过期|失效|刷新")).count() > 0
+            if last == 0 or expired:
+                report_login(account, qr_shot(page, reload=expired))
                 last = time.time()
             page.wait_for_timeout(3000)
     finally:
